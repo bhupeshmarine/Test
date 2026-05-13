@@ -154,3 +154,49 @@ def profile_country_code_format(df: pd.DataFrame, columns: list) -> pd.DataFrame
         })
 
     return pd.DataFrame(results)
+
+
+
+import pandas as pd
+
+def profile_country_consistency(df: pd.DataFrame, country_columns: list) -> pd.DataFrame:
+    """
+    Checks whether multiple country fields are same within each record.
+    Example: principal_country, head_office_country, legal_country
+    """
+
+    # Clean country columns
+    cleaned = (
+        df[country_columns]
+        .astype("string")
+        .apply(lambda col: col.str.strip().str.upper().str.replace(r"\s+", " ", regex=True))
+    )
+
+    # Replace blank strings with NA
+    cleaned = cleaned.replace("", pd.NA)
+
+    # Number of available country values per row
+    available_country_count = cleaned.notna().sum(axis=1)
+
+    # Number of unique country values per row
+    unique_country_count = cleaned.nunique(axis=1, dropna=True)
+
+    # All same = at least 2 country values available and only 1 unique country
+    all_same_flag = (available_country_count >= 2) & (unique_country_count == 1)
+
+    # Not all same = at least 2 country values available and more than 1 unique country
+    not_all_same_flag = (available_country_count >= 2) & (unique_country_count > 1)
+
+    comparable_records = (available_country_count >= 2).sum()
+
+    result = {
+        "total_records": len(df),
+        "comparable_records": comparable_records,
+        "all_same_count": all_same_flag.sum(),
+        "not_all_same_count": not_all_same_flag.sum(),
+        "all_same_rate": round(all_same_flag.sum() / comparable_records, 4) if comparable_records > 0 else 0,
+        "not_all_same_rate": round(not_all_same_flag.sum() / comparable_records, 4) if comparable_records > 0 else 0,
+        "records_with_less_than_2_country_values": (available_country_count < 2).sum()
+    }
+
+    return pd.DataFrame([result])
