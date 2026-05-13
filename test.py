@@ -17,3 +17,22 @@ name_length_stats = {
 }
 
 name_length_stats
+
+
+name_col = "entity_legal_name"
+
+s = df[name_col].fillna("")
+
+df["has_non_latin"] = s.str.contains(r"[^\x00-\x7F]", regex=True)
+df["is_numeric_only"] = s.str.strip().str.fullmatch(r"\d+")
+df["has_control_char"] = s.str.contains(r"[\n\r\t]", regex=True)
+
+df["special_char_flag"] = (
+    df["has_non_latin"] |
+    df["is_numeric_only"] |
+    df["has_control_char"]
+)
+
+special_character_rate = df["special_char_flag"].mean()
+
+special_character_rate
