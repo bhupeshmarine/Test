@@ -200,3 +200,60 @@ def profile_country_consistency(df: pd.DataFrame, country_columns: list) -> pd.D
     }
 
     return pd.DataFrame([result])
+
+
+
+import pandas as pd
+
+def profile_industry_code_patterns(df: pd.DataFrame, code_columns: list) -> pd.DataFrame:
+    """
+    Profiles industry code columns for nulls, unique values, and expected pattern validity.
+    """
+
+    pattern_map = {
+        "party_sic_code": r"^SIC-\d{4}$",
+        "party_smicx_code": r"^SMICS-\d{8}$",
+        "naics_code": r"^NAICSUS-\d{6}$",
+        "nace_code": r"^NACE-\d{2}\.\d{2}$"
+    }
+
+    results = []
+
+    for col in code_columns:
+        s = df[col].astype("string").str.strip().str.upper()
+
+        total_records = len(df)
+        null_count = df[col].isna().sum()
+        blank_count = (s == "").sum()
+
+        valid_values = s[s.notna() & (s != "")]
+        valid_value_count = len(valid_values)
+        unique_count = valid_values.nunique()
+
+        pattern = pattern_map[col]
+
+        valid_pattern = valid_values.str.fullmatch(pattern)
+
+        valid_pattern_count = valid_pattern.fillna(False).sum()
+        invalid_pattern_count = valid_value_count - valid_pattern_count
+
+        invalid_pattern_rate = (
+            invalid_pattern_count / valid_value_count
+            if valid_value_count > 0
+            else 0
+        )
+
+        results.append({
+            "column_name": col,
+            "expected_pattern": pattern,
+            "total_records": total_records,
+            "null_count": null_count,
+            "blank_count": blank_count,
+            "valid_value_count": valid_value_count,
+            "unique_count": unique_count,
+            "valid_pattern_count": valid_pattern_count,
+            "invalid_pattern_count": invalid_pattern_count,
+            "invalid_pattern_rate": round(invalid_pattern_rate, 4)
+        })
+
+    return pd.DataFrame(results)
