@@ -36,3 +36,66 @@ df["special_char_flag"] = (
 special_character_rate = df["special_char_flag"].mean()
 
 special_character_rate
+
+import pandas as pd
+
+def profile_name_columns(df: pd.DataFrame, name_columns: list) -> pd.DataFrame:
+    """
+    Cleans selected name columns and returns profiling summary:
+    null count, non-null count, blank count, unique count, duplicate count.
+    """
+
+    results = []
+
+    for col in name_columns:
+        if col not in df.columns:
+            results.append({
+                "column_name": col,
+                "status": "column not found",
+                "total_records": len(df),
+                "null_count": None,
+                "blank_count": None,
+                "valid_name_count": None,
+                "unique_name_count": None,
+                "duplicate_name_count": None,
+                "unique_name_rate": None
+            })
+            continue
+
+        # Original column
+        original = df[col]
+
+        # Cleaned column: strip, uppercase, replace multiple spaces with single space
+        cleaned = (
+            original
+            .astype("string")
+            .str.strip()
+            .str.upper()
+            .str.replace(r"\s+", " ", regex=True)
+        )
+
+        total_records = len(df)
+        null_count = original.isna().sum()
+        blank_count = (cleaned == "").sum()
+
+        # Valid names = not null and not blank
+        valid_names = cleaned[cleaned.notna() & (cleaned != "")]
+
+        valid_name_count = len(valid_names)
+        unique_name_count = valid_names.nunique()
+        duplicate_name_count = valid_name_count - unique_name_count
+        unique_name_rate = unique_name_count / valid_name_count if valid_name_count > 0 else 0
+
+        results.append({
+            "column_name": col,
+            "status": "ok",
+            "total_records": total_records,
+            "null_count": null_count,
+            "blank_count": blank_count,
+            "valid_name_count": valid_name_count,
+            "unique_name_count": unique_name_count,
+            "duplicate_name_count": duplicate_name_count,
+            "unique_name_rate": round(unique_name_rate, 4)
+        })
+
+    return pd.DataFrame(results)
