@@ -99,3 +99,15 @@ def profile_name_columns(df: pd.DataFrame, name_columns: list) -> pd.DataFrame:
         })
 
     return pd.DataFrame(results)
+
+country_col = "country_code"
+
+s = df[country_col].astype("string").str.strip().str.upper()
+
+valid_country_pattern = s.str.fullmatch(r"[A-Z]{2}|[A-Z]{3}")
+
+total_records = len(df)
+valid_country_count = valid_country_pattern.fillna(False).sum()
+invalid_country_count = total_records - valid_country_count
+
+invalid_country_rate = invalid_country_count / total_records
