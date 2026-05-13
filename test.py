@@ -111,3 +111,46 @@ valid_country_count = valid_country_pattern.fillna(False).sum()
 invalid_country_count = total_records - valid_country_count
 
 invalid_country_rate = invalid_country_count / total_records
+
+
+
+
+import pandas as pd
+
+def profile_country_code_format(df: pd.DataFrame, columns: list) -> pd.DataFrame:
+    results = []
+
+    for col in columns:
+        s = df[col].astype("string").str.strip().str.upper()
+
+        total_records = len(df)
+        null_count = df[col].isna().sum()
+        blank_count = (s == "").sum()
+
+        valid_values = s[s.notna() & (s != "")]
+        unique_count = valid_values.nunique()
+
+        valid_pattern = valid_values.str.fullmatch(r"[A-Z]{2}|[A-Z]{3}")
+
+        valid_pattern_count = valid_pattern.fillna(False).sum()
+        invalid_pattern_count = len(valid_values) - valid_pattern_count
+
+        invalid_pattern_rate = (
+            invalid_pattern_count / len(valid_values)
+            if len(valid_values) > 0
+            else 0
+        )
+
+        results.append({
+            "column_name": col,
+            "total_records": total_records,
+            "null_count": null_count,
+            "blank_count": blank_count,
+            "valid_value_count": len(valid_values),
+            "unique_count": unique_count,
+            "valid_pattern_count": valid_pattern_count,
+            "invalid_pattern_count": invalid_pattern_count,
+            "invalid_pattern_rate": round(invalid_pattern_rate, 4)
+        })
+
+    return pd.DataFrame(results)
