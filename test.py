@@ -1,24 +1,32 @@
-def extract_info(address):
+import pandas as pd
+import re
 
-    if not isinstance(address, str):
-        return pd.Series({'state': None, 'zip': None})
+def extract_state_zip(df, address_column):
 
-    lines = [x.strip() for x in address.split('\n')]
+    def extract_info(address):
 
-    state = None
-    zip_code = None
+        if pd.isna(address):
+            return pd.Series([None, None])
 
-    for i, line in enumerate(lines):
+        lines = [x.strip() for x in str(address).split('\n')]
 
-        if re.fullmatch(r'[A-Z]{2}', line):
-            state = line
+        state = None
+        zip_code = None
 
-            if i + 1 < len(lines):
-                if re.fullmatch(r'\d{5}', lines[i + 1]):
-                    zip_code = lines[i + 1]
+        for line in lines:
 
-            break
+            # State code (TX, AZ, CA, etc.)
+            if re.fullmatch(r'[A-Z]{2}', line):
+                state = line
 
-    return pd.Series({'state': state, 'zip': zip_code})
+            # ZIP code
+            if re.fullmatch(r'\d{5}', line):
+                zip_code = line
 
-print(df_bbg['entity_address'].iloc[0])
+        return pd.Series([state, zip_code])
+
+    df[['state', 'zip']] = df[address_column].apply(extract_info)
+
+    return df
+
+df_bbg = extract_state_zip(df_bbg, 'entity_address')
