@@ -266,3 +266,36 @@ DF2_1, DF4_FULL = create_step2_outputs(
     validation_ml_output_table=validation_ML_output_table,
     bbg_table=BBG_INPUT_TABLE,
 )
+DF2_1, DF4_FULL = create_step2_outputs(
+    spark=spark,
+    validation_ml_output_table=validation_ML_output_table,
+    bbg_table=BBG_INPUT_TABLE,
+    prob_col="prob_match",
+    prdm_id_col="master_party_smun_identifier",
+    party_name_col="party_legal_name",
+    master_party_name_col="master_party_legal_name",
+    bbg_id_col="entity_bloomberg_id",
+    bbg_legal_name_col="entity_legal_name",
+    bbg_lei_name_col="entity_lei_name",
+    bbg_short_name_col="entity_short_name",
+    top_n=5,
+    exact_prob=1.0,
+    med_low=0.8
+)
+
+def create_step2_outputs(
+    spark,
+    validation_ml_output_table,
+    bbg_table,
+    prob_col="prob_match",
+    prdm_id_col="master_party_smun_identifier",
+    party_name_col="party_legal_name",
+    master_party_name_col="master_party_legal_name",
+    bbg_id_col="entity_bloomberg_id",
+    bbg_legal_name_col="entity_legal_name",
+    bbg_lei_name_col="entity_lei_name",
+    bbg_short_name_col="entity_short_name",
+    top_n=5,
+    exact_prob=1.0,
+    med_low=0.8,
+):
