@@ -1,181 +1,268 @@
-from typing import Tuple, Optional
+from typing import Tuple
+
 from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
 
 
-def _check_columns(df: DataFrame, required_cols: list[str], df_name: str) -> None:
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"{df_name} is missing columns: {missing}")
+def _require_columns(df: DataFrame, required_cols: list[str], df_name: str) -> None:
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"{df_name} is missing required columns: {missing_cols}")
 
 
-def _normalize_name(col: str):
-    return F.lower(
-        F.regexp_replace(
-            F.trim(F.col(col)),
-            r"[^a-zA-Z0-9 ]",
-            ""
-        )
+def _normalize_col(column):
+    return F.regexp_replace(
+        F.lower(F.trim(column)),
+        r"\s+",
+        " "
     )
 
 
-def create_step2_tables(
+def create_step2_outputs(
     spark: SparkSession,
     validation_ml_output_table: str,
-    bbg_input_table: str,
-    step2_all_100_table: Optional[str] = None,
-    step2_less_100_table: Optional[str] = None,
-    prob_col: str = "prob_match",
-    prdm_id_col: str = "master_party_smun_identifier",
-    prdm_name_col: str = "party_legal_name",
-    bbg_id_col: str = "entity_bloomberg_id",
-    bbg_name_col: str = "entity_name",
-    threshold: float = 0.80,
+    bbg_table: str,
     top_n: int = 5,
-    save_tables: bool = True,
+    exact_prob: float = 1.0,
+    med_low: float = 0.8,
 ) -> Tuple[DataFrame, DataFrame]:
     """
-    Creates two Step-2 output tables:
+    Creates Step-2 outputs after validation ML model.
 
-    1. step2_all_100_df:
-       Records where ML model probability is exactly 1.0.
+    Inputs:
+        1. validation_ml_output_table
+        2. bbg_table
 
-    2. step2_less_100_df:
-       Records where ML model probability is >= threshold and < 1.0,
-       expanded with additional BBG candidate records using name similarity.
-
-    Parameters
-    ----------
-    spark : SparkSession
-        Active Spark session.
-
-    validation_ml_output_table : str
-        Table containing ML output with probability column.
-
-    bbg_input_table : str
-        BBG source/master table used to increase search space.
-
-    step2_all_100_table : str, optional
-        Output table name for 100% matches.
-
-    step2_less_100_table : str, optional
-        Output table name for expanded candidates.
-
-    Returns
-    -------
-    Tuple[DataFrame, DataFrame]
-        step2_all_100_df, step2_less_100_df
+    Outputs:
+        1. DF2_1    -> exact 100% ML matches
+        2. DF4_FULL -> expanded BBG candidates for less-than-100% matches
     """
 
-    ml_df = spark.table(validation_ml_output_table)
-    bbg_df = spark.table(bbg_input_table)
+    prob_col = "prob_match"
 
-    _check_columns(
-        ml_df,
-        [prob_col, prdm_id_col, prdm_name_col],
-        "validation_ml_output_table"
+    prdm_id_col = "master_party_smun_identifier"
+    party_name_col = "party_legal_name"
+    master_party_name_col = "master_party_legal_name"
+
+    bbg_id_col = "entity_bloomberg_id"
+    bbg_legal_name_col = "entity_legal_name"
+    bbg_lei_name_col = "entity_lei_name"
+    bbg_short_name_col = "entity_short_name"
+
+    df2 = spark.table(validation_ml_output_table).cache()
+    bbg_raw = spark.table(bbg_table)
+
+    _require_columns(
+        df2,
+        [prob_col, prdm_id_col, party_name_col, master_party_name_col],
+        "validation_ml_output_table",
     )
 
-    _check_columns(
-        bbg_df,
-        [bbg_id_col, bbg_name_col],
-        "bbg_input_table"
+    _require_columns(
+        bbg_raw,
+        [bbg_id_col, bbg_legal_name_col, bbg_lei_name_col, bbg_short_name_col],
+        "bbg_table",
     )
 
-    # 1. Exact 100% match table
-    step2_all_100_df = ml_df.filter(F.col(prob_col) == F.lit(1.0))
+    # ------------------------------------------------------------
+    # 1. DF2_1: exact 100% matches
+    # ------------------------------------------------------------
+    DF2_1 = df2.filter(F.col(prob_col) >= F.lit(exact_prob))
 
-    # 2. Less than 100%, but still high-confidence records
-    less_100_df = ml_df.filter(
-        (F.col(prob_col) >= F.lit(threshold)) &
-        (F.col(prob_col) < F.lit(1.0))
+    # ------------------------------------------------------------
+    # 2. DF3: records between 0.8 and 1.0
+    # ------------------------------------------------------------
+    DF3 = df2.filter(
+        (F.col(prob_col) >= F.lit(med_low))
+        & (F.col(prob_col) < F.lit(exact_prob))
     )
 
-    # Normalize PRDM names
-    less_100_clean = (
-        less_100_df
-        .withColumn("prdm_clean_name", _normalize_name(prdm_name_col))
-        .withColumn("blocking_key", F.substring(F.col("prdm_clean_name"), 1, 5))
+    # ------------------------------------------------------------
+    # 3. Get unique names from DF3
+    # ------------------------------------------------------------
+    DF3_NAMES = (
+        DF3
+        .select(
+            F.col(prdm_id_col),
+            F.trim(F.col(party_name_col)).alias(party_name_col),
+            F.trim(F.col(master_party_name_col)).alias(master_party_name_col),
+        )
+        .dropDuplicates()
     )
 
-    # Normalize BBG names
-    bbg_clean = (
-        bbg_df
-        .withColumn("bbg_clean_name", _normalize_name(bbg_name_col))
-        .withColumn("blocking_key", F.substring(F.col("bbg_clean_name"), 1, 5))
+    # ------------------------------------------------------------
+    # 4. Normalize BBG names
+    # ------------------------------------------------------------
+    BBG = (
+        bbg_raw
+        .select(
+            F.col(bbg_id_col),
+            F.trim(F.col(bbg_legal_name_col)).alias(bbg_legal_name_col),
+            F.trim(F.col(bbg_lei_name_col)).alias(bbg_lei_name_col),
+            F.trim(F.col(bbg_short_name_col)).alias(bbg_short_name_col),
+        )
+        .dropDuplicates()
+        .withColumn("entity_legal_norm", _normalize_col(F.col(bbg_legal_name_col)))
+        .withColumn("entity_lei_norm", _normalize_col(F.col(bbg_lei_name_col)))
+        .withColumn("entity_short_norm", _normalize_col(F.col(bbg_short_name_col)))
     )
 
-    # Join on blocking key to avoid full cross join
-    candidate_df = (
-        less_100_clean.alias("p")
-        .join(
-            bbg_clean.alias("b"),
-            on="blocking_key",
-            how="left"
+    # ------------------------------------------------------------
+    # 5. Normalize DF3 names
+    # ------------------------------------------------------------
+    DF3_NAMES_N = (
+        DF3_NAMES
+        .withColumn("party_legal_norm", _normalize_col(F.col(party_name_col)))
+        .withColumn("master_party_norm", _normalize_col(F.col(master_party_name_col)))
+        .withColumn("party_key3", F.substring(F.col("party_legal_norm"), 1, 3))
+        .withColumn("master_key3", F.substring(F.col("master_party_norm"), 1, 3))
+    )
+
+    BBG_N = (
+        BBG
+        .withColumn("bbg_legal_key3", F.substring(F.col("entity_legal_norm"), 1, 3))
+        .withColumn("bbg_lei_key3", F.substring(F.col("entity_lei_norm"), 1, 3))
+        .withColumn("bbg_short_key3", F.substring(F.col("entity_short_norm"), 1, 3))
+    )
+
+    # ------------------------------------------------------------
+    # 6. Blocking join against all BBG name columns
+    # ------------------------------------------------------------
+    join_condition = (
+        (F.col("p.party_key3") == F.col("b.bbg_legal_key3"))
+        | (F.col("p.party_key3") == F.col("b.bbg_lei_key3"))
+        | (F.col("p.party_key3") == F.col("b.bbg_short_key3"))
+        | (F.col("p.master_key3") == F.col("b.bbg_legal_key3"))
+        | (F.col("p.master_key3") == F.col("b.bbg_lei_key3"))
+        | (F.col("p.master_key3") == F.col("b.bbg_short_key3"))
+    )
+
+    DF4_MATCH_CANDIDATES = (
+        DF3_NAMES_N.alias("p")
+        .join(BBG_N.alias("b"), join_condition, "left")
+    )
+
+    # ------------------------------------------------------------
+    # 7. Calculate six Levenshtein distances
+    # ------------------------------------------------------------
+    DF4_MATCH_CANDIDATES = (
+        DF4_MATCH_CANDIDATES
+        .withColumn(
+            "dist_party_to_entity_legal",
+            F.levenshtein(F.col("party_legal_norm"), F.col("entity_legal_norm")),
+        )
+        .withColumn(
+            "dist_party_to_entity_lei",
+            F.levenshtein(F.col("party_legal_norm"), F.col("entity_lei_norm")),
+        )
+        .withColumn(
+            "dist_party_to_entity_short",
+            F.levenshtein(F.col("party_legal_norm"), F.col("entity_short_norm")),
+        )
+        .withColumn(
+            "dist_master_to_entity_legal",
+            F.levenshtein(F.col("master_party_norm"), F.col("entity_legal_norm")),
+        )
+        .withColumn(
+            "dist_master_to_entity_lei",
+            F.levenshtein(F.col("master_party_norm"), F.col("entity_lei_norm")),
+        )
+        .withColumn(
+            "dist_master_to_entity_short",
+            F.levenshtein(F.col("master_party_norm"), F.col("entity_short_norm")),
+        )
+        .withColumn(
+            "closest_distance",
+            F.least(
+                F.col("dist_party_to_entity_legal"),
+                F.col("dist_party_to_entity_lei"),
+                F.col("dist_party_to_entity_short"),
+                F.col("dist_master_to_entity_legal"),
+                F.col("dist_master_to_entity_lei"),
+                F.col("dist_master_to_entity_short"),
+            ),
         )
         .withColumn(
             "name_distance",
-            F.levenshtein(
-                F.col("p.prdm_clean_name"),
-                F.col("b.bbg_clean_name")
-            )
+            F.levenshtein(F.col("party_legal_norm"), F.col("entity_legal_norm")),
+        )
+        .withColumn(
+            "name_sim",
+            F.lit(1)
+            - (
+                F.col("name_distance")
+                / F.greatest(
+                    F.length(F.col("party_legal_norm")),
+                    F.length(F.col("entity_legal_norm")),
+                )
+            ),
         )
     )
 
-    window_spec = Window.partitionBy(
-        F.col(f"p.{prdm_id_col}")
-    ).orderBy(
-        F.col("name_distance").asc(),
-        F.col(f"p.{prob_col}").desc()
+    # ------------------------------------------------------------
+    # 8. Rank and keep top N BBG candidates per input name
+    # ------------------------------------------------------------
+    w = (
+        Window
+        .partitionBy(prdm_id_col, party_name_col, master_party_name_col)
+        .orderBy(
+            F.col("closest_distance").asc(),
+            F.col("name_sim").desc(),
+            F.col(bbg_legal_name_col).asc(),
+        )
     )
 
-    step2_less_100_df = (
-        candidate_df
-        .withColumn("candidate_rank", F.row_number().over(window_spec))
-        .filter(F.col("candidate_rank") <= top_n)
-        .drop("prdm_clean_name", "bbg_clean_name", "blocking_key")
+    DF4 = (
+        DF4_MATCH_CANDIDATES
+        .withColumn("match_rank", F.row_number().over(w))
+        .filter(F.col("match_rank") <= F.lit(top_n))
     )
 
-    if save_tables:
-        if not step2_all_100_table or not step2_less_100_table:
-            raise ValueError(
-                "Output table names are required when save_tables=True."
-            )
+    # ------------------------------------------------------------
+    # 9. Dedupe DF3, then join back to keep every ML-output column
+    # ------------------------------------------------------------
+    DF3_DEDUP = DF3.dropDuplicates(
+        [prdm_id_col, party_name_col, master_party_name_col]
+    )
 
-        (
-            step2_all_100_df
-            .write
-            .mode("overwrite")
-            .option("overwriteSchema", "true")
-            .saveAsTable(step2_all_100_table)
+    DF4_FULL = (
+        DF4.alias("m")
+        .join(
+            DF3_DEDUP.alias("d"),
+            (
+                (F.col(f"m.{prdm_id_col}") == F.col(f"d.{prdm_id_col}"))
+                & (F.col(f"m.{party_name_col}") == F.col(f"d.{party_name_col}"))
+                & (
+                    F.col(f"m.{master_party_name_col}")
+                    == F.col(f"d.{master_party_name_col}")
+                )
+            ),
+            "inner",
         )
-
-        (
-            step2_less_100_df
-            .write
-            .mode("overwrite")
-            .option("overwriteSchema", "true")
-            .saveAsTable(step2_less_100_table)
+        .select(
+            F.col("d.*"),
+            F.col(f"m.{bbg_id_col}").alias("candidate_bbg_id"),
+            F.col(f"m.{bbg_legal_name_col}").alias("candidate_entity_legal_name"),
+            F.col(f"m.{bbg_lei_name_col}").alias("candidate_entity_lei_name"),
+            F.col(f"m.{bbg_short_name_col}").alias("candidate_entity_short_name"),
+            F.col("m.closest_distance"),
+            F.col("m.match_rank"),
+            F.col("m.dist_party_to_entity_legal"),
+            F.col("m.dist_party_to_entity_lei"),
+            F.col("m.dist_party_to_entity_short"),
+            F.col("m.dist_master_to_entity_legal"),
+            F.col("m.dist_master_to_entity_lei"),
+            F.col("m.dist_master_to_entity_short"),
+            F.col("m.name_sim"),
         )
+    )
 
-    return step2_all_100_df, step2_less_100_df
+    return DF2_1, DF4_FULL
 
+from increase_search_space import create_step2_outputs
 
-
-from increase_search_space import create_step2_tables
-
-step2_all_100_df, step2_less_100_df = create_step2_tables(
+DF2_1, DF4_FULL = create_step2_outputs(
     spark=spark,
     validation_ml_output_table=validation_ML_output_table,
-    bbg_input_table=BBG_INPUT_TABLE,
-    step2_all_100_table=step2_all_100_table,
-    step2_less_100_table=step2_less_100_table,
-    prob_col="prob_match",
-    prdm_id_col="master_party_smun_identifier",
-    prdm_name_col="party_legal_name",
-    bbg_id_col="entity_bloomberg_id",
-    bbg_name_col="entity_name",
-    threshold=0.80,
-    top_n=5,
-    save_tables=True
+    bbg_table=BBG_INPUT_TABLE,
 )
