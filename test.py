@@ -1,6 +1,13 @@
 from databricks.sdk import WorkspaceClient
+import requests
 
+# 1. Get the OAuth client ID of your Databricks App
 w = WorkspaceClient()
 
-print("Workspace host:", w.config.host)
-print("Authentication configured:", w.config.auth_type)
+app_name = "data-acquisition-agent"
+
+app_client_id = w.apps.get(
+    app_name
+).oauth2_app_client_id
+
+print("App OAuth client ID retrieved successfully")
