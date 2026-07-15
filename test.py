@@ -1,27 +1,15 @@
-from flask import Flask, request, jsonify
+import requests
 
-app = Flask(__name__)
+app_url = "PASTE_YOUR_APP_URL_HERE"
 
+response = requests.post(
+    f"{app_url}/invoke",
+    json={
+        "country": "US",
+        "prdm_naics_code": "541511",
+        "bbg_naics_code": "541511"
+    }
+)
 
-@app.route("/", methods=["GET"])
-def home():
-    return jsonify({
-        "status": "ok",
-        "message": "Data Acquisition Agent is running"
-    })
-
-
-@app.route("/invoke", methods=["POST"])
-def invoke():
-    payload = request.get_json(silent=True) or {}
-
-    return jsonify({
-        "agent_id": 2,
-        "current_stage": "data_acquisition",
-        "status": "test_success",
-        "received_input": payload
-    })
-
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000)
+print("Status code:", response.status_code)
+print("Response:", response.json())
