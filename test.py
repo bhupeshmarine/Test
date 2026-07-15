@@ -1,16 +1,27 @@
-val_ids = df_val.select("master_party_smun_identifier").distinct()
-final_ids = df_final_selected.select("master_party_smun_identifier").distinct()
+from flask import Flask, request, jsonify
 
-extra_ids = final_ids.subtract(val_ids)
-missing_ids = val_ids.subtract(final_ids)
-
-display(extra_ids)
-display(missing_ids)
+app = Flask(__name__)
 
 
-print("df_val unique:", val_ids.count())
-print("df_final unique:", final_ids.count())
-print("extra ids:", extra_ids.count())
-print("missing ids:", missing_ids.count())
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({
+        "status": "ok",
+        "message": "Data Acquisition Agent is running"
+    })
 
-df_final_selected = df_final_selected.join(val_ids, on="master_party_smun_identifier", how="inner")
+
+@app.route("/invoke", methods=["POST"])
+def invoke():
+    payload = request.get_json(silent=True) or {}
+
+    return jsonify({
+        "agent_id": 2,
+        "current_stage": "data_acquisition",
+        "status": "test_success",
+        "received_input": payload
+    })
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8000)
