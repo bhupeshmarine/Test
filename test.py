@@ -6,11 +6,14 @@ from sklearn.linear_model import LogisticRegression
 from mlflow.models import infer_signature
 
 
-# 1. Create / select experiment
+# Select experiment
 mlflow.set_experiment("/Shared/simple_endpoint_test")
 
+# Disable automatic MLflow logging
+mlflow.autolog(disable=True)
 
-# 2. Create simple test data
+
+# Create test data
 X = pd.DataFrame({
     "x1": [0, 1, 2, 3, 4, 5],
     "x2": [0, 0, 1, 1, 2, 2]
@@ -19,21 +22,17 @@ X = pd.DataFrame({
 y = [0, 0, 0, 1, 1, 1]
 
 
-# 3. Train model
+# Train model
 model = LogisticRegression()
 model.fit(X, y)
 
 
-# 4. Create signature
+# Create signature
 predictions = model.predict(X)
-
-signature = infer_signature(
-    X,
-    predictions
-)
+signature = infer_signature(X, predictions)
 
 
-# 5. Log model
+# Create only ONE MLflow run
 with mlflow.start_run() as run:
 
     mlflow.sklearn.log_model(
