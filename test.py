@@ -1,4 +1,6 @@
-print("Status code:", response.status_code)
-print("Content-Type:", response.headers.get("content-type"))
-print("Response URL:", response.url)
-print("Response text:", response.text[:1000])
+from databricks.sdk import WorkspaceClient
+
+w = WorkspaceClient()
+
+print("Workspace host:", w.config.host)
+print("Authentication configured:", w.config.auth_type)
