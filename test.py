@@ -2,18 +2,18 @@ from mlflow.genai.agent_server import invoke
 
 
 @invoke()
-def invoke_agent(request):
+def data_acquisition_agent(request):
     return {
-        "output": [
+        "agent_id": 2,
+        "country": "US",
+        "current_stage": "data_acquisition",
+        "status": "test_success",
+        "history": [
             {
-                "type": "message",
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "output_text",
-                        "text": "Data Acquisition Agent is running"
-                    }
-                ]
+                "agent_id": 2,
+                "stage": "data_acquisition",
+                "status": "completed"
             }
-        ]
+        ],
+        "received_request": request
     }
