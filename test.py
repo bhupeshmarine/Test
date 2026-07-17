@@ -1,25 +1,112 @@
-with mlflow.start_run(
-    run_name="ml_inference_node"
-) as run:
+class MLInferenceModel(mlflow.pyfunc.PythonModel):
 
-    logged_model_info = mlflow.pyfunc.log_model(
+    def predict(self, context, model_input, params=None):
 
-        artifact_path="model",
+        results = []
 
-        python_model=MLInferenceModel(),
+        for _, row in model_input.iterrows():
 
-        input_example=input_example,
+            config_state = {
+                "settings_path": row["settings_path"],
+                "env": row["env"]
+            }
 
-        signature=signature,
+            config_result = config_context_node(config_state)
 
-        code_path=[
-            f"{PROJECT_ROOT}/agents",
-            f"{PROJECT_ROOT}/tools"
-        ],
+            state = {
+                "config": config_result["config"]
+            }
 
-        pip_requirements=[
-            "pandas"
-        ]
-    )
+            result = ml_inference_node(state)
 
-print(logged_model_info.model_uri)
+            results.append(result)
+
+        return pd.DataFrame(results)
+
+
+
+
+
+
+settings_path = f"{PROJECT_ROOT}/configs/settings.yaml"
+
+input_example = pd.DataFrame([{
+    "settings_path": settings_path,
+    "env": "test_agent_v1"
+}])
+
+sample_output = pd.DataFrame([
+    ml_inference_node({
+        "config": config_context_node({
+            "settings_path": settings_path,
+            "env": "test_agent_v1"
+        })["config"]
+    })
+])
+
+signature = infer_signature(
+    input_example,
+    sample_output
+)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
