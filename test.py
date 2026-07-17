@@ -1,45 +1,146 @@
-import mlflow
-import mlflow.sklearn
-import pandas as pd
-
-from sklearn.linear_model import LogisticRegression
-from mlflow.models import infer_signature
-
-
-# Select experiment
-mlflow.set_experiment("/Shared/simple_endpoint_test")
-
-# Disable automatic MLflow logging
-mlflow.autolog(disable=True)
-
-
-# Create test data
-X = pd.DataFrame({
-    "x1": [0, 1, 2, 3, 4, 5],
-    "x2": [0, 0, 1, 1, 2, 2]
-})
-
-y = [0, 0, 0, 1, 1, 1]
+state = {
+    "config": {
+        "input_type": row["input_type"],
+        "model_objects": {
+            "pickle_file_path": row["model_file"]
+        },
+        "database_table": {
+            "validation_input_table": row["validation_input_table"],
+            "step3_features_table": row["step3_features_table"],
+            "validation_ML_output_table": row["validation_ML_output_table"],
+            "step3_ML_output_table": row["step3_ML_output_table"]
+        }
+    }
+}
 
 
-# Train model
-model = LogisticRegression()
-model.fit(X, y)
 
 
-# Create signature
-predictions = model.predict(X)
-signature = infer_signature(X, predictions)
+result = ml_inference_node(state)
 
 
-# Create only ONE MLflow run
-with mlflow.start_run() as run:
 
-    mlflow.sklearn.log_model(
-        sk_model=model,
+class MLInferenceModel(mlflow.pyfunc.PythonModel):
+
+    def predict(self, context, model_input, params=None):
+
+        results = []
+
+        for _, row in model_input.iterrows():
+
+            state = {
+                "config": {
+                    "input_type": row["input_type"],
+
+                    "model_objects": {
+                        "pickle_file_path": row["model_file"]
+                    },
+
+                    "database_table": {
+                        "validation_input_table":
+                            row["validation_input_table"],
+
+                        "step3_features_table":
+                            row["step3_features_table"],
+
+                        "validation_ML_output_table":
+                            row["validation_ML_output_table"],
+
+                        "step3_ML_output_table":
+                            row["step3_ML_output_table"]
+                    }
+                }
+            }
+
+            result = ml_inference_node(state)
+
+            results.append(result)
+
+        return pd.DataFrame(results)
+
+
+
+input_example = pd.DataFrame([{
+
+    "input_type": "raw",
+
+    "model_file":
+        "/your/model/path/model.pkl",
+
+    "validation_input_table":
+        "catalog.schema.validation_input",
+
+    "step3_features_table":
+        "catalog.schema.step3_features",
+
+    "validation_ML_output_table":
+        "catalog.schema.validation_ml_output",
+
+    "step3_ML_output_table":
+        "catalog.schema.step3_ml_output"
+}])
+
+
+
+sample_state = {
+    "config": {
+        "input_type": "raw",
+
+        "model_objects": {
+            "pickle_file_path":
+                "/your/model/path/model.pkl"
+        },
+
+        "database_table": {
+            "validation_input_table":
+                "catalog.schema.validation_input",
+
+            "step3_features_table":
+                "catalog.schema.step3_features",
+
+            "validation_ML_output_table":
+                "catalog.schema.validation_ml_output",
+
+            "step3_ML_output_table":
+                "catalog.schema.step3_ml_output"
+        }
+    }
+}
+
+sample_output = pd.DataFrame([
+    ml_inference_node(sample_state)
+])
+
+
+
+signature = infer_signature(
+    input_example,
+    sample_output
+)
+
+
+with mlflow.start_run(
+    run_name="ml_inference_node"
+) as run:
+
+    logged_model_info = mlflow.pyfunc.log_model(
+
         artifact_path="model",
+
+        python_model=MLInferenceModel(),
+
+        input_example=input_example,
+
         signature=signature,
-        input_example=X.iloc[:2]
+
+        code_path=[
+            "agents",
+            "tools"
+        ],
+
+        pip_requirements=[
+            "pandas"
+        ]
     )
 
-    print("Run ID:", run.info.run_id)
+print(logged_model_info.model_uri)
