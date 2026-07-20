@@ -1,169 +1,109 @@
-# ============================================================
-# CELL 1 - Imports and project setup
-# ============================================================
-
-import os
-import sys
-import yaml
-import mlflow
+import json
 import pandas as pd
 
-from mlflow.models.signature import infer_signature
+from itertools import product
+from typing import List
+
+from pydantic import BaseModel, Field
+from databricks_langchain import ChatDatabricks
+from langchain_core.prompts import ChatPromptTemplate
+
+class PairScore(BaseModel):
+    pair_id: str
+    score: float = Field(ge=0, le=1)
 
 
-PROJECT_ROOT = "/Workspace/Shared/Global_Entity_Resolution/final Workflow/SAMPLE_LangGraph_Agent_ml_flow_V1"
-
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+class ComparisonResult(BaseModel):
+    comparisons: List[PairScore]
 
 
-for pkg in [
-    "agents",
-    "agents/search_expansion_agent",
-    "tools"
-]:
-    init_path = os.path.join(PROJECT_ROOT, pkg, "__init__.py")
-
-    if not os.path.exists(init_path):
-        open(init_path, "w").close()
-
-
-from agents.search_expansion_agent.agent import search_expansion_node
-
-
-
-# ============================================================
-# CELL 2 - Load config
-# ============================================================
-
-def load_config(settings_path, env):
-
-    with open(settings_path, "r") as file:
-        settings = yaml.safe_load(file)
-
-    if env in settings:
-        return settings[env]
-
-    if "environments" in settings and env in settings["environments"]:
-        return settings["environments"][env]
-
-    if "env" in settings and env in settings["env"]:
-        return settings["env"][env]
-
-    if "database_table" in settings:
-        return settings
-
-    raise ValueError(
-        f"Could not find environment '{env}' "
-        f"in settings file: {settings_path}"
-    )
-
-
-# ============================================================
-# CELL 3 - MLflow wrapper
-# ============================================================
-
-class SearchExpansionModel(mlflow.pyfunc.PythonModel):
-
-    def predict(self, context, model_input, params=None):
-
-        results = []
-
-        for _, row in model_input.iterrows():
-
-            config = load_config(
-                settings_path=row["settings_path"],
-                env=row["env"]
-            )
-
-            state = {
-                "config": config
-            }
-
-            result = search_expansion_node(state)
-
-            results.append(result)
-
-        return pd.DataFrame(results)
-
-
-# ============================================================
-# CELL 4 - Input example, sample output, signature
-# ============================================================
-
-settings_path = f"{PROJECT_ROOT}/configs/settings.yaml"
-
-
-input_example = pd.DataFrame([{
-    "settings_path": settings_path,
-    "env": "test_agent_v1"
-}])
-
-
-sample_config = load_config(
-    settings_path=settings_path,
-    env="test_agent_v1"
+llm = ChatDatabricks(
+    endpoint="databricks-claude-sonnet-4-5",
+    temperature=0
 )
 
+structured_llm = llm.with_structured_output(ComparisonResult)
 
-sample_output = pd.DataFrame([
-    search_expansion_node({
-        "config": sample_config
-    })
+
+prompt = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        """
+        You are an entity matching judge.
+
+        Compare every provided pair and return a similarity score
+        between 0 and 1.
+
+        1 = definitely the same entity
+        0 = definitely different
+
+        Consider spelling differences, abbreviations, initials,
+        formatting differences, word order, and minor typos.
+
+        Return one score for every pair_id.
+        """
+    ),
+    (
+        "human",
+        "{pairs}"
+    )
 ])
 
 
-signature = infer_signature(
-    input_example,
-    sample_output
-)
+judge_chain = prompt | structured_llm
 
 
-# ============================================================
-# CELL 5 - Log model
-# ============================================================
 
-with mlflow.start_run(
-    run_name="search_expansion_node"
-) as run:
+def compare_fields(df, list_1, list_2):
 
-    logged_model_info = mlflow.pyfunc.log_model(
+    result_df = df.copy()
 
-        artifact_path="model",
+    # Create all combinations
+    column_pairs = list(product(list_1, list_2))
 
-        python_model=SearchExpansionModel(),
+    # Create output columns
+    output_columns = {
+        f"{left}__{right}":
+        f"score__{left}__vs__{right}"
 
-        input_example=input_example,
+        for left, right in column_pairs
+    }
 
-        signature=signature,
+    # Store results
+    all_results = []
 
-        code_path=[
-            f"{PROJECT_ROOT}/agents",
-            f"{PROJECT_ROOT}/tools"
-        ],
+    for _, row in result_df.iterrows():
 
-        pip_requirements=[
-            "pandas",
-            "pyyaml"
+        pairs = []
+
+        for left, right in column_pairs:
+
+            pair_id = f"{left}__{right}"
+
+            pairs.append({
+                "pair_id": pair_id,
+                "left_value": str(row[left]),
+                "right_value": str(row[right])
+            })
+
+        # One LLM call for the entire row
+        response = judge_chain.invoke({
+            "pairs": json.dumps(pairs)
+        })
+
+        row_scores = {
+            item.pair_id: item.score
+            for item in response.comparisons
+        }
+
+        all_results.append(row_scores)
+
+    # Add score columns
+    for pair_id, output_column in output_columns.items():
+
+        result_df[output_column] = [
+            row_result.get(pair_id)
+            for row_result in all_results
         ]
-    )
 
-
-print(logged_model_info.model_uri)
-
-
-# ============================================================
-# CELL 6 - Register model
-# ============================================================
-
-model_name = "mrd_red_dev.ered_gold.search_expansion_agent"
-
-registered_model = mlflow.register_model(
-    model_uri=logged_model_info.model_uri,
-    name=model_name
-)
-
-print(
-    "Registered model version:",
-    registered_model.version
-)
+    return result_df
