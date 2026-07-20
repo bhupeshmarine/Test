@@ -1,3 +1,9 @@
-%pip install "mlflow==3.13.0" "databricks-langchain"
-%pip install "mlflow==3.12.0" "databricks-langchain"
-dbutils.library.restartPython()
+import subprocess
+
+result = subprocess.run(
+    ["pip", "install", "databricks-langchain==0.2.0", "-v"],
+    capture_output=True,
+    text=True
+)
+
+print(result.stderr[-5000:])
